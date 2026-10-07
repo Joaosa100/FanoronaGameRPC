@@ -1,8 +1,15 @@
-# Fanorona em Rede (Sockets)
+# Fanorona em Rede (RPC)
 
 Implementação do jogo de tabuleiro **Fanorona** (jogo tradicional de dois jogadores
 originário de Madagascar) para dois jogadores em máquinas diferentes, comunicando via
-**sockets TCP** (`QTcpServer`/`QTcpSocket`). Feito em C++/Qt Widgets.
+**RPC** (invocação remota de métodos, no estilo RMI do Java). Cada lado expõe uma
+interface remota (`PeerRemote`) com um método por ação do jogo (`remoteMove`,
+`remoteChat`, `remoteResign`, ...); quem quer jogar invoca esse método diretamente
+através de um *stub* (`BoardStub`), que serializa a chamada e a entrega, do outro lado,
+a um *skeleton* (`BoardSkeleton`) que a executa direto no tabuleiro remoto — sem montar
+mensagens genéricas nem checar um campo de "tipo". O transporte por baixo continua
+sendo TCP (`QTcpServer`/`QTcpSocket`), do mesmo jeito que o próprio RMI do Java também
+usa sockets escondidos por baixo da chamada remota. Feito em C++/Qt Widgets.
 
 O projeto está na pasta [`Fanorona/`](./Fanorona).
 
