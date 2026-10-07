@@ -3,23 +3,23 @@
 
 #include <vector>
 
-#include <QJsonObject>
 #include <QObject>
 #include <QString>
 
+#include "peerremote.h"
 #include "piece.h"
 
 class GamePage;
 class NetworkSession;
 
-namespace protocol {
-struct MoveStepDTO;
-}
 struct Move;
 
-// Liga GamePage (UI+regras de interacao) a NetworkSession (transporte), aplicando a
-// atribuicao de cores/turno inicial e traduzindo eventos locais <-> mensagens de rede.
-class GameController : public QObject {
+// Liga GamePage (UI+regras de interacao) a NetworkSession (RPC caseiro), aplicando a
+// atribuicao de cores/turno inicial e traduzindo eventos locais em chamadas remotas
+// (e chamadas remotas recebidas em acoes locais). GameController implementa PeerRemote
+// para SER o "tabuleiro" que o lado remoto invoca -- equivalente ao Servidor.java do
+// exemplo em aula, que implementa de fato a interface remota.
+class GameController : public QObject, public PeerRemote {
     Q_OBJECT
 
 public:
@@ -31,11 +31,17 @@ public:
                     const QString &remoteName,
                     QObject *parent = nullptr);
 
+    // PeerRemote: chamadas invocadas pelo lado remoto neste tabuleiro.
+    void remoteHello(const QString &playerName) override;
+    void remoteStartGame(bool hostPlaysFirst) override;
+    void remoteMove(const std::vector<MoveStepDTO> &steps) override;
+    void remoteChat(const QString &text) override;
+    void remoteResign() override;
+
 signals:
     void gameOver(Player winner, const QString &reason);
 
 private slots:
-    void onNetworkMessage(const QJsonObject &obj);
     void onLocalMoveFinished(const Move &move, Player mover);
     void onChatSubmitted(const QString &text);
     void onResignRequested();
@@ -43,7 +49,7 @@ private slots:
     void onNetworkDisconnected();
 
 private:
-    Move reconstructRemoteMove(const std::vector<protocol::MoveStepDTO> &steps) const;
+    Move reconstructRemoteMove(const std::vector<MoveStepDTO> &steps) const;
 
     NetworkSession *m_session;
     GamePage *m_gamePage;

@@ -10,7 +10,6 @@ class GameController;
 class GamePage;
 class HomePage;
 class NetworkSession;
-class QJsonObject;
 class QStackedWidget;
 
 class MainWindow : public QMainWindow

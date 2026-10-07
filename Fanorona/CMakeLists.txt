@@ -24,8 +24,13 @@ set(PROJECT_SOURCES
         core/move.h
         core/moverules.h
         core/moverules.cpp
-        net/protocol.h
-        net/protocol.cpp
+        net/peerremote.h
+        net/boardwire.h
+        net/boardwire.cpp
+        net/boardstub.h
+        net/boardstub.cpp
+        net/boardskeleton.h
+        net/boardskeleton.cpp
         net/networksession.h
         net/networksession.cpp
         controller/gamecontroller.h

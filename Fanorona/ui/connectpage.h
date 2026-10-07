@@ -1,9 +1,9 @@
 #ifndef CONNECTPAGE_H
 #define CONNECTPAGE_H
 
-#include <QJsonObject>
 #include <QWidget>
 
+#include "peerremote.h"
 #include "piece.h"
 
 class NetworkSession;
@@ -14,8 +14,11 @@ class QStackedWidget;
 
 // Cuida da UI e do handshake de rede (troca de "hello" + sorteio de quem comeca) para
 // os dois modos: hospedar (QTcpServer aguardando conexao) e entrar (conecta em
-// IP:porta digitados). Emite sessionReady() quando a partida esta pronta para comecar.
-class ConnectPage : public QWidget {
+// IP:porta digitados). O handshake agora e feito invocando diretamente os metodos
+// remoteHello()/remoteStartGame() da interface PeerRemote -- ConnectPage implementa
+// PeerRemote para RECEBER essas chamadas enquanto a partida ainda nao comecou (ver
+// setLocalBoard). Emite sessionReady() quando a partida esta pronta para comecar.
+class ConnectPage : public QWidget, public PeerRemote {
     Q_OBJECT
 
 public:
@@ -26,6 +29,13 @@ public:
     void startHosting(const QString &localName);
     void startJoining(const QString &localName);
 
+    // PeerRemote: chamadas recebidas do outro lado durante o handshake.
+    void remoteHello(const QString &playerName) override;
+    void remoteStartGame(bool hostPlaysFirst) override;
+    void remoteMove(const std::vector<MoveStepDTO> &steps) override;
+    void remoteChat(const QString &text) override;
+    void remoteResign() override;
+
 signals:
     void sessionReady(NetworkSession *session, Player localPlayer, Player firstTurn,
                        const QString &localName, const QString &remoteName);
@@ -35,7 +45,6 @@ private slots:
     void onConnectClicked();
     void onCancelClicked();
     void onSessionConnected();
-    void onSessionMessage(const QJsonObject &obj);
     void onSessionError(const QString &message);
 
 private:
@@ -57,7 +66,6 @@ private:
     bool m_isHost = false;
     QString m_localName;
     QString m_remoteName;
-    bool m_helloSent = false;
 };
 
 #endif // CONNECTPAGE_H

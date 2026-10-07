@@ -10,7 +10,6 @@
 #include <QVBoxLayout>
 
 #include "networksession.h"
-#include "protocol.h"
 
 ConnectPage::ConnectPage(QWidget *parent)
     : QWidget(parent)
@@ -77,7 +76,6 @@ void ConnectPage::resetSession()
         m_session->deleteLater();
         m_session = nullptr;
     }
-    m_helloSent = false;
 }
 
 void ConnectPage::startHosting(const QString &localName)
@@ -89,8 +87,10 @@ void ConnectPage::startHosting(const QString &localName)
 
     m_session = new NetworkSession(this);
     connect(m_session, &NetworkSession::connected, this, &ConnectPage::onSessionConnected);
-    connect(m_session, &NetworkSession::messageReceived, this, &ConnectPage::onSessionMessage);
     connect(m_session, &NetworkSession::errorOccurred, this, &ConnectPage::onSessionError);
+    // A partir de agora, chamadas remotas de hello/start_game caem direto
+    // nos metodos desta classe (ver remoteHello/remoteStartGame abaixo).
+    m_session->setLocalBoard(this);
 
     QString error;
     if (!m_session->startHosting(kDefaultPort, &error)) {
@@ -127,8 +127,8 @@ void ConnectPage::onConnectClicked()
     resetSession();
     m_session = new NetworkSession(this);
     connect(m_session, &NetworkSession::connected, this, &ConnectPage::onSessionConnected);
-    connect(m_session, &NetworkSession::messageReceived, this, &ConnectPage::onSessionMessage);
     connect(m_session, &NetworkSession::errorOccurred, this, &ConnectPage::onSessionError);
+    m_session->setLocalBoard(this);
 
     m_joinStatusLabel->setText(tr("Conectando..."));
     m_session->connectToHost(host, port);
@@ -136,38 +136,53 @@ void ConnectPage::onConnectClicked()
 
 void ConnectPage::onSessionConnected()
 {
-    m_helloSent = true;
-    m_session->sendMessage(protocol::makeHello(m_localName));
+    // Invoca diretamente o metodo no "tabuleiro" remoto -- nao ha string de
+    // tipo nem objeto JSON sendo montado aqui, so a chamada da interface.
+    m_session->remote()->remoteHello(m_localName);
     if (m_isHost)
         m_hostInfoLabel->setText(tr("Jogador conectado! Sincronizando..."));
     else
         m_joinStatusLabel->setText(tr("Conectado! Aguardando início da partida..."));
 }
 
-void ConnectPage::onSessionMessage(const QJsonObject &obj)
+void ConnectPage::remoteHello(const QString &playerName)
 {
-    const QString type = protocol::messageType(obj);
-
-    if (type == QStringLiteral("hello")) {
-        m_remoteName = protocol::helloPlayerName(obj);
-        if (m_isHost) {
-            const bool hostFirst = QRandomGenerator::global()->bounded(2) == 0;
-            m_session->sendMessage(protocol::makeStartGame(hostFirst));
-            const Player firstTurn = hostFirst ? Player::PlayerA : Player::PlayerB;
-            NetworkSession *session = m_session;
-            m_session = nullptr; // dono agora é o GameController (ver reparent em GameController)
-            emit sessionReady(session, Player::PlayerA, firstTurn, m_localName, m_remoteName);
-        }
+    m_remoteName = playerName;
+    if (!m_isHost)
         return;
-    }
 
-    if (type == QStringLiteral("start_game") && !m_isHost) {
-        const bool hostFirst = protocol::startGameHostPlaysFirst(obj);
-        const Player firstTurn = hostFirst ? Player::PlayerA : Player::PlayerB;
-        NetworkSession *session = m_session;
-        m_session = nullptr;
-        emit sessionReady(session, Player::PlayerB, firstTurn, m_localName, m_remoteName);
-    }
+    const bool hostFirst = QRandomGenerator::global()->bounded(2) == 0;
+    m_session->remote()->remoteStartGame(hostFirst);
+    const Player firstTurn = hostFirst ? Player::PlayerA : Player::PlayerB;
+    NetworkSession *session = m_session;
+    m_session = nullptr; // dono agora é o GameController (ver reparent em GameController)
+    emit sessionReady(session, Player::PlayerA, firstTurn, m_localName, m_remoteName);
+}
+
+void ConnectPage::remoteStartGame(bool hostPlaysFirst)
+{
+    if (m_isHost)
+        return;
+
+    const Player firstTurn = hostPlaysFirst ? Player::PlayerA : Player::PlayerB;
+    NetworkSession *session = m_session;
+    m_session = nullptr;
+    emit sessionReady(session, Player::PlayerB, firstTurn, m_localName, m_remoteName);
+}
+
+void ConnectPage::remoteMove(const std::vector<MoveStepDTO> &)
+{
+    // Nao ocorre durante o handshake; o jogo so comeca depois de sessionReady.
+}
+
+void ConnectPage::remoteChat(const QString &)
+{
+    // Idem.
+}
+
+void ConnectPage::remoteResign()
+{
+    // Idem.
 }
 
 void ConnectPage::onSessionError(const QString &message)

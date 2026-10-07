@@ -6,7 +6,6 @@
 #include "move.h"
 #include "moverules.h"
 #include "networksession.h"
-#include "protocol.h"
 
 GameController::GameController(NetworkSession *session,
                                  GamePage *gamePage,
@@ -23,6 +22,9 @@ GameController::GameController(NetworkSession *session,
     , m_remoteName(remoteName)
 {
     m_session->setParent(this);
+    // A partir de agora, chamadas remotas de move/chat/resign caem direto
+    // nos metodos desta classe (ver remoteMove/remoteChat/remoteResign).
+    m_session->setLocalBoard(this);
 
     const QString nameA = localPlayer == Player::PlayerA ? m_localName : m_remoteName;
     const QString nameB = localPlayer == Player::PlayerB ? m_localName : m_remoteName;
@@ -35,7 +37,6 @@ GameController::GameController(NetworkSession *session,
     connect(m_gamePage, &GamePage::resignRequested, this, &GameController::onResignRequested);
     connect(m_gamePage->chat(), &ChatWidget::messageSubmitted, this, &GameController::onChatSubmitted);
 
-    connect(m_session, &NetworkSession::messageReceived, this, &GameController::onNetworkMessage);
     connect(m_session, &NetworkSession::disconnected, this, &GameController::onNetworkDisconnected);
 
     m_gamePage->chat()->appendSystemMessage(tr("Partida iniciada. %1 joga primeiro.")
@@ -47,19 +48,22 @@ void GameController::onLocalMoveFinished(const Move &move, Player /*mover*/)
     if (m_gameEnded)
         return;
 
-    std::vector<protocol::MoveStepDTO> dtoSteps;
+    std::vector<MoveStepDTO> dtoSteps;
     for (const auto &step : move.steps) {
-        protocol::MoveStepDTO dto;
+        MoveStepDTO dto;
         dto.from = step.from;
         dto.to = step.to;
         dto.captureType = step.captureType;
         dto.captured = step.captured;
         dtoSteps.push_back(dto);
     }
-    m_session->sendMessage(protocol::makeMove(dtoSteps));
+    // Invoca diretamente o metodo no tabuleiro remoto -- "o j1 move sua peça
+    // no seu tabuleiro e invoca a função no tabuleiro do j2", sem montar
+    // mensagem nem indicar tipo.
+    m_session->remote()->remoteMove(dtoSteps);
 }
 
-Move GameController::reconstructRemoteMove(const std::vector<protocol::MoveStepDTO> &steps) const
+Move GameController::reconstructRemoteMove(const std::vector<MoveStepDTO> &steps) const
 {
     Board scratch = m_gamePage->currentBoard();
     const Player mover = opponent(m_localPlayer);
@@ -91,27 +95,41 @@ Move GameController::reconstructRemoteMove(const std::vector<protocol::MoveStepD
     return move;
 }
 
-void GameController::onNetworkMessage(const QJsonObject &obj)
+void GameController::remoteMove(const std::vector<MoveStepDTO> &steps)
 {
     if (m_gameEnded)
         return;
+    m_endReason = tr("captura de todas as peças");
+    const Move move = reconstructRemoteMove(steps);
+    m_gamePage->applyExternalMove(move);
+}
 
-    const QString type = protocol::messageType(obj);
-    if (type == QStringLiteral("move")) {
-        m_endReason = tr("captura de todas as peças");
-        const Move move = reconstructRemoteMove(protocol::moveSteps(obj));
-        m_gamePage->applyExternalMove(move);
-    } else if (type == QStringLiteral("chat")) {
-        m_gamePage->chat()->appendRemoteMessage(m_remoteName, protocol::chatText(obj));
-    } else if (type == QStringLiteral("resign")) {
-        m_endReason = tr("%1 desistiu").arg(m_remoteName);
-        m_gamePage->forceGameOver(m_localPlayer);
-    }
+void GameController::remoteChat(const QString &text)
+{
+    m_gamePage->chat()->appendRemoteMessage(m_remoteName, text);
+}
+
+void GameController::remoteResign()
+{
+    if (m_gameEnded)
+        return;
+    m_endReason = tr("%1 desistiu").arg(m_remoteName);
+    m_gamePage->forceGameOver(m_localPlayer);
+}
+
+void GameController::remoteHello(const QString &)
+{
+    // Handshake ja concluido pela ConnectPage antes do GameController existir.
+}
+
+void GameController::remoteStartGame(bool)
+{
+    // Idem.
 }
 
 void GameController::onChatSubmitted(const QString &text)
 {
-    m_session->sendMessage(protocol::makeChat(text));
+    m_session->remote()->remoteChat(text);
     m_gamePage->chat()->appendLocalMessage(m_localName, text);
 }
 
@@ -119,7 +137,7 @@ void GameController::onResignRequested()
 {
     if (m_gameEnded)
         return;
-    m_session->sendMessage(protocol::makeResign());
+    m_session->remote()->remoteResign();
     m_endReason = tr("%1 desistiu").arg(m_localName);
     m_gamePage->forceGameOver(opponent(m_localPlayer));
 }

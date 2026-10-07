@@ -1,14 +1,18 @@
 #include "networksession.h"
 
 #include <QHostAddress>
-#include <QJsonDocument>
 #include <QTcpServer>
 #include <QTcpSocket>
+
+#include "boardskeleton.h"
+#include "boardstub.h"
 
 NetworkSession::NetworkSession(QObject *parent)
     : QObject(parent)
 {
 }
+
+NetworkSession::~NetworkSession() = default;
 
 bool NetworkSession::startHosting(quint16 port, QString *errorMessage)
 {
@@ -56,34 +60,33 @@ void NetworkSession::handleNewConnection()
 void NetworkSession::attachSocket(QTcpSocket *socket)
 {
     m_socket = socket;
-    connect(m_socket, &QTcpSocket::readyRead, this, &NetworkSession::handleReadyRead);
+
+    // Monta o par stub/skeleton sobre o mesmo socket: um para invocar
+    // metodos no outro lado, outro para receber e executar as chamadas que
+    // o outro lado faz aqui.
+    m_stub = std::make_unique<BoardStub>(socket);
+    m_skeleton = std::make_unique<BoardSkeleton>(socket);
+    if (m_pendingLocalBoard)
+        m_skeleton->setTarget(m_pendingLocalBoard);
+
     connect(m_socket, &QTcpSocket::disconnected, this, &NetworkSession::handleDisconnected);
+}
+
+PeerRemote *NetworkSession::remote() const
+{
+    return m_stub.get();
+}
+
+void NetworkSession::setLocalBoard(PeerRemote *localBoard)
+{
+    m_pendingLocalBoard = localBoard;
+    if (m_skeleton)
+        m_skeleton->setTarget(localBoard);
 }
 
 void NetworkSession::handleSocketConnected()
 {
     emit connected();
-}
-
-void NetworkSession::handleReadyRead()
-{
-    m_buffer += m_socket->readAll();
-
-    int newlineIndex;
-    while ((newlineIndex = m_buffer.indexOf('\n')) != -1) {
-        const QByteArray line = m_buffer.left(newlineIndex);
-        m_buffer.remove(0, newlineIndex + 1);
-        if (line.trimmed().isEmpty())
-            continue;
-
-        QJsonParseError parseError;
-        const QJsonDocument doc = QJsonDocument::fromJson(line, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            emit errorOccurred(tr("Mensagem de rede inválida recebida."));
-            continue;
-        }
-        emit messageReceived(doc.object());
-    }
 }
 
 void NetworkSession::handleSocketError(QAbstractSocket::SocketError)
@@ -95,15 +98,6 @@ void NetworkSession::handleSocketError(QAbstractSocket::SocketError)
 void NetworkSession::handleDisconnected()
 {
     emit disconnected();
-}
-
-void NetworkSession::sendMessage(const QJsonObject &message)
-{
-    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState)
-        return;
-    QByteArray bytes = QJsonDocument(message).toJson(QJsonDocument::Compact);
-    bytes.append('\n');
-    m_socket->write(bytes);
 }
 
 bool NetworkSession::isConnected() const
